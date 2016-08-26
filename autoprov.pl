@@ -17,6 +17,8 @@ use Term::ReadKey;
 use YAML qw(Dump LoadFile);
 use Data::Dumper;
 use Term::ANSIColor;
+use POSIX qw(strftime);
+use Lingua::EN::Numbers::Ordinate;
 
 use constant DEBUG_MSG => "debug";
 use constant ERROR_MSG => "error";
@@ -27,6 +29,9 @@ my $ip_lookup_data = "/build/config/ip_lookup.yaml";
 my ($vi_servers, $vm_fields, $clusters, $datastores, $guest_creds, $guest_boot_timeout);
 my $ignore_exit = 0;
 our( $opt_v, $opt_d );
+my $user = getpwuid($<);
+my $ord = get_ord(strftime( "%e", localtime));
+my $datetime = strftime( "%A the $ord of %B %Y at %I:%M %p", localtime);
 
 $ENV{PERL_NET_HTTPS_SSL_SOCKET_CLASS} = 'Net::SSL';
 $ENV{PERL_LWP_SSL_VERIFY_HOSTNAME} = 0;
@@ -119,12 +124,12 @@ for my $new_vm ( @$new_vms ){
 
     my $dc_view = get_dc_view( $vim, $datacenter );
 
+#=begin GHOSTCODE
     my $esx_folder = get_esx_folder_ref($vim, $dc_view, $folder);
     my( $esx_host, $datastore ) = get_esx_host_and_ds( $vim, $dc_view, $clusters, $datastores );
 
     #next;
     
-#=begin GHOSTCODE
     clone_vm( $vim, $dc_view, { 
                         ds => $datastore, 
                         host => $esx_host,
@@ -137,10 +142,10 @@ for my $new_vm ( @$new_vms ){
                                   },
                       } );
 #=end GHOSTCODE
-
 #=cut
     my $vm = get_vm_ref( $vim, $dc_view, $guest_name );
 
+#=begin GHOSTCODE
     # Make sure it is powered off
     ensure_vm_off( $vm );
 
@@ -155,7 +160,12 @@ for my $new_vm ( @$new_vms ){
     # Add additional Hard Disks
     add_disk_to_vm( $vm, $extra_disk_gb );
 
+#=end GHOSTCODE
+#=cut
     # Add Metadata to VI
+    info_msg( "Adding Metadata to VirtualCenter" );
+    new_annot( $vm, "Built by $user on $datetime\n" );
+#=begin GHOSTCODE
 
     # Make sure it is powered on
     ensure_vm_on( $vm );
@@ -180,16 +190,26 @@ for my $new_vm ( @$new_vms ){
         sleep 5;
     }
     info_msg( "Waiting for the VM to be fully booted" );
-    #sleep 10; #Give it some extra time to finish boot scripts
+    sleep 5; #Give it some extra time to finish boot scripts
+#=end GHOSTCODE
+#=cut
+
+    my $ans; # var to handle the return codes and data from vm commands
+    my $quiet = 0; # Whether to mute the messages inside the run cmd sub
 
     # Add some Puppet facts to the guest
     info_msg( "Adding the Puppet facts" );
+    my $script = create_facts_script( $puppet_facts );
+    $ans = copy_file_to_vm( $vim, $vi_server, $vm, $script, "/tmp/set_puppet_facts.sh", $guest_creds );
+    $ans = run_cmd_on_vm( $vim, $vm, "/bin/bash", "/tmp/set_puppet_facts.sh", $guest_creds, $quiet );
 
     # Configure the IP address inside the guest and bootstrap the additional install
-    my $quiet = 0;
-    my $ans = run_cmd_on_vm( $vim, $vm, "/root/setup.sh", "$guest_name $ip_address $puppet_role", $guest_creds->{user}, $guest_creds->{passwd}, $quiet );
+#=begin GHOSTCODE
+    $ans = run_cmd_on_vm( $vim, $vm, "/root/setup.sh", "$guest_name $ip_address $puppet_role", $guest_creds, $quiet );
 
     fatal_err( "Could not successfully run the command on the VM!  Details:\n\n".$ans->{details} ) if not $ans->{success}; 
+#=end GHOSTCODE
+#=cut
 
 }
 
@@ -713,8 +733,7 @@ sub run_cmd_on_vm {
     my $vm = shift;
     my $cmd = shift;
     my $args = shift;
-    my $guestusername = shift;
-    my $guestpassword = shift;
+    my $guest_creds = shift;
     my $quiet = shift;
 
     info_msg( "Running command (".var($cmd." ".$args).") on ".var($vm->name) ) if not $quiet;
@@ -723,8 +742,7 @@ sub run_cmd_on_vm {
 
     my $wd = "/tmp";
 
-    #my( $guestCreds, $guestOpMgr ) = &acquireGuestAuth($vim, $vm, $guestusername, $guestpassword);
-    my $ans = &acquireGuestAuth($vim, $vm, $guestusername, $guestpassword);
+    my $ans = &acquireGuestAuth($vim, $vm, $guest_creds->{user}, $guest_creds->{passwd});
     return { success => 0, 
              details => "Could not validate the guest credentials in " . var($vm->name) 
            } if( not $ans->{success} );
@@ -805,4 +823,99 @@ sub get_dc_view {
     return $datacenter_view;
 }
 
+sub create_facts_script {
+    my $facts = shift;
+    my $facts_dir = "/etc/puppetlabs/facter/facts.d";
+    my $script = "#!/bin/bash\numask 0022\nmkdir -p $facts_dir\n";
 
+    for my $key (keys %$facts ){
+        next if $key eq "role";
+        if( ref($facts->{$key}) =~ /ARRAY|HASH/i ){
+            my $hash = { $key => $facts->{$key} };
+            $script .= "echo '".Dump($hash)."' > $facts_dir/$key.yaml\n";
+        } else {
+            $script .= "echo $key=".$facts->{$key}." > $facts_dir/$key.txt\n";
+        }
+    }
+    return $script;
+}
+sub copy_file_to_vm {
+    my $vim = shift;
+    my $vi_server = shift;
+    my $vm = shift;
+    my $file = shift;
+    my $dest = shift;
+    my $guest_creds = shift;
+    my $overwrite = 'true';
+
+    info_msg( "Copying file ($dest) to ".var($vm->name) );
+
+    my $ans = &acquireGuestAuth($vim, $vm, $guest_creds->{user}, $guest_creds->{passwd});
+    return { success => 0, 
+             details => "Could not validate the guest credentials in " . var($vm->name) 
+           } if( not $ans->{success} );
+    my( $guestCreds, $guestOpMgr ) = ( $ans->{guest_auth}, $ans->{guest_op_mgr} );
+    my $fileMgr = $vim->get_view(mo_ref => $guestOpMgr->fileManager);
+
+    my ( $content, $size );
+    if( $file !~ /\n/ and -r $file ) {
+        # Assume $file is a file on the local file system
+        $size = -s $file;
+        open(FILE, $file) || die("Error: Could not open file $file!".$!);
+        $content = do { local $/; <FILE> };
+        close(FILE);
+    } else {
+        # Assume $file is a string with the contents of the file
+        $size = length( $file );
+        $content = $file;
+    }
+    eval {
+        my $fileAttr = GuestFileAttributes->new();
+        my $url = $fileMgr->InitiateFileTransferToGuest( vm =>$vm, 
+                                                         auth => $guestCreds, 
+                                                         guestFilePath => $dest, 
+                                                         fileAttributes => $fileAttr, 
+                                                         fileSize => $size, 
+                                                         overwrite => $overwrite,
+                                                       );
+        $url =~ s/\*/$vi_server/;
+
+        my $ua = LWP::UserAgent->new();
+        my $req = HTTP::Request->new(PUT => $url);
+        $req->content($content);
+        my $res = $ua->request($req);
+
+        if($res->is_success()) {
+            debug_msg("Succesfully uploaded '$dest' to guest!");
+        } else {
+            die( "Error: ".$res->error_as_HTML );
+        }
+    };
+    return { success => 0, details => $@ } if $@;
+    return { success => 1 };
+}
+
+sub append_annot {
+    my $vm = shift;
+    my $annotation = $vm->config->annotation.shift;
+    new_annot( $vm, $annotation );
+
+}
+sub new_annot {
+    my $vm = shift;
+    my $annotation = shift;
+    my $spec = VirtualMachineConfigSpec->new(annotation => $annotation);
+    chomp($annotation);
+	info_msg( "Adding Note to ".var($vm->name).": '$annotation'" );
+    eval {
+        $vm->ReconfigVM(spec => $spec);
+    };
+    fatal_err( "Could not update the Notes of the VM!  Details:\n\n".$@ ) if $@; 
+
+}
+
+sub get_ord {
+    my $day = shift;
+    $day =~ s/\s+//g;
+    return ordinate($day);
+}
