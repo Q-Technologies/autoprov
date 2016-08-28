@@ -1,6 +1,7 @@
 #!/build/perlbrew/perls/perl-5.10.1/bin/perl
 # Author: Matthew Mallard
 # Website: www.q-technologies.com.au
+# Date: 26th August 2016
 # 
 
 use strict;
@@ -122,6 +123,9 @@ for my $new_vm ( @$new_vms ){
     my $vim;
     $vim = connect_to_vi( $vi_url, $session_file );
 
+    # Check whether VM already exists within Virtual Center
+    fatal_err( "A VM of that name ($guest_name) already exists" ) if vm_exists( $vim, $guest_name );
+
     my $dc_view = get_dc_view( $vim, $datacenter );
 
 #=begin GHOSTCODE
@@ -158,7 +162,7 @@ for my $new_vm ( @$new_vms ){
     }
 
     # Add additional Hard Disks
-    add_disk_to_vm( $vm, $extra_disk_gb );
+    add_disk_to_vm( $vm, $extra_disk_gb ) if $extra_disk_gb;
 
 #=end GHOSTCODE
 #=cut
@@ -176,10 +180,8 @@ for my $new_vm ( @$new_vms ){
     while(1){
         my $elapsed_time = (time - $start_time);
         debug_msg( "Testing running command on guest now: ".var($elapsed_time)." of ".var($guest_boot_timeout)." seconds" );
-        #$@ = try_cmd( \&run_cmd_on_vm( $vim, $vm, "/usr/bin/uptime", "", $guest_creds->{user}, $guest_creds->{passwd} ) );
-        #eval { run_cmd_on_vm( $vim, $vm, "/usr/bin/uptime", "", $guest_creds->{user}, $guest_creds->{passwd} ) };
         my $quiet = 1;
-        my $ans = run_cmd_on_vm( $vim, $vm, "/usr/bin/uptime", "", $guest_creds->{user}, $guest_creds->{passwd}, $quiet );
+        my $ans = run_cmd_on_vm( $vim, $vm, "/usr/bin/uptime", "", $guest_creds, $quiet );
         #say $@;
         last if $ans->{success};
         # Try every 5 seconds
@@ -742,7 +744,7 @@ sub run_cmd_on_vm {
 
     my $wd = "/tmp";
 
-    my $ans = &acquireGuestAuth($vim, $vm, $guest_creds->{user}, $guest_creds->{passwd});
+    my $ans = &acquireGuestAuth($vim, $vm, $guest_creds);
     return { success => 0, 
              details => "Could not validate the guest credentials in " . var($vm->name) 
            } if( not $ans->{success} );
@@ -781,12 +783,16 @@ sub ensure_vm_on {
 
 sub acquireGuestAuth {
     my $vim = shift;
-    my ($vmview,$gu,$gp) = @_;
+    my $vmview = shift;
+    my $guest_creds = shift;
     my $success = 0;
     
     my $guest_op_mgr = $vim->get_view(mo_ref => $vim->get_service_content()->guestOperationsManager);
     my $authMgr = $vim->get_view(mo_ref => $guest_op_mgr->authManager);
-    my $guest_auth = NamePasswordAuthentication->new(username => $gu, password => $gp, interactiveSession => 'false');
+    my $guest_auth = NamePasswordAuthentication->new( username => $guest_creds->{user}, 
+                                                      password => $guest_creds->{passwd}, 
+                                                      interactiveSession => 'false',
+                                                    );
 
     debug_msg("Validating guest credentials in " . var($vmview->name) . " ...");
     eval {
@@ -850,7 +856,7 @@ sub copy_file_to_vm {
 
     info_msg( "Copying file ($dest) to ".var($vm->name) );
 
-    my $ans = &acquireGuestAuth($vim, $vm, $guest_creds->{user}, $guest_creds->{passwd});
+    my $ans = &acquireGuestAuth($vim, $vm, $guest_creds);
     return { success => 0, 
              details => "Could not validate the guest credentials in " . var($vm->name) 
            } if( not $ans->{success} );
@@ -918,4 +924,20 @@ sub get_ord {
     my $day = shift;
     $day =~ s/\s+//g;
     return ordinate($day);
+}
+
+sub vm_exists {
+    my $vim = shift;
+    my $guest_name = shift;
+    my $vm_views = $vim->find_entity_views(view_type => 'VirtualMachine', filter => { 'name' => $guest_name });
+    debug_msg( "Checking whether $guest_name is unique within Virtual Center" );
+    if( @$vm_views > 0 ){
+        debug_msg( "$guest_name already exists" );
+        return 1;
+    } else {
+        debug_msg( "$guest_name was not found" );
+        return 0;
+    }
+
+
 }
