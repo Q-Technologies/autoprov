@@ -154,11 +154,11 @@ for my $new_vm ( @$new_vms ){
     ensure_vm_off( $vm );
 
     # Set the network for the primary adapter
-    set_vm_net( $vm, $network );
+    set_vm_net( $vim, $vm, $network );
 
     # Add additional network adapters
     for my $net ( keys %extra_nets ){
-        add_vm_net( $vm, $net );
+        add_vm_net( $vim, $vm, $net );
     }
 
     # Add additional Hard Disks
@@ -305,7 +305,7 @@ sub clone_vm {
             fatal_err( "Could not clone the VM!  Details:\n\n".$@ ) if $@; 
         }
     } else {
-        die "Could not find the reference (base) VM to clone";
+        die "Could not find the reference (template) VM to clone";
     }
 }
 
@@ -356,7 +356,7 @@ sub info_msg {
 }
 
 sub var {
-    return '%%'.shift.'##';
+    return '%%'.shift().'##';
 }
 
 sub debug_msg {
@@ -462,13 +462,14 @@ sub add_disk_to_vm {
 
 # Update the network settings on a guest
 sub set_vm_net {
+    my $vim = shift;
     my $vm = shift;
     my $network = shift;
     info_msg( "Setting the network to '".var($network)."' on the primary NIC on ".var($vm->name) );
 
     # Find the device and update the backing network
     my $device = find_device($vm, 'VirtualVmxnet3', 'Network adapter 1');
-    $device->backing( VirtualEthernetCardNetworkBackingInfo->new(deviceName => $network) );
+    set_net_backing( $vim, $device, $network );
 
     # Create an edit operation and perform it
     my $devspec = VirtualDeviceConfigSpec->new( operation => VirtualDeviceConfigSpecOperation->new('edit'),
@@ -482,6 +483,7 @@ sub set_vm_net {
 
 # Add a new network card to a guest
 sub add_vm_net {
+    my $vim = shift;
     my $vm = shift;
     my $network = shift;
 
@@ -490,6 +492,7 @@ sub add_vm_net {
     # Create a new network device and set the backing network
     my $device = VirtualVmxnet3->new( key => -1, 
                                       backing => VirtualEthernetCardNetworkBackingInfo->new(deviceName => $network));
+    set_net_backing( $vim, $device, $network );
 
     # Create an add operation and perform it
     my $devspec = VirtualDeviceConfigSpec->new( operation => VirtualDeviceConfigSpecOperation->new('add'),
@@ -499,6 +502,26 @@ sub add_vm_net {
        $vm->ReconfigVM( spec => $vmspec );
     };
     fatal_err( "Could not add a new network interface to the VM!  Details:\n\n".$@ ) if $@; 
+}
+
+sub set_net_backing {
+    my $vim = shift;
+    my $device = shift;
+    my $network = shift;
+
+    # Find the network type
+    my $net_info = get_network_info( $vim, $network );
+
+    # Find the device and update the backing network
+    if( $net_info->{type} eq "DistributedVirtualPortgroup" ){
+        my $port = DistributedVirtualSwitchPortConnection->new( portgroupKey => $net_info->{key}, 
+                                                                switchUuid => get_switch_uuid( $vim, $net_info->{switch} )
+                                                              );
+        $device->backing( VirtualEthernetCardDistributedVirtualPortBackingInfo->new(port => $port ) );
+    } else {
+        $device->backing( VirtualEthernetCardNetworkBackingInfo->new(deviceName => $network) );
+    }
+
 }
 
 # Find a VM's device by type and label
@@ -514,6 +537,35 @@ sub find_device {
       }
    }
    return undef;
+}
+
+# Find Switch UUID
+sub get_switch_uuid {
+    my $vim = shift;
+    my $mo_ref = shift;
+    
+    my $sw_views = $vim->find_entity_views(view_type => 'DistributedVirtualSwitch');
+    foreach my $sw (@$sw_views) {
+        return $sw->summary->uuid if $mo_ref eq $sw->{'mo_ref'}->value;
+    }
+
+}
+
+# Find the network information
+sub get_network_info {
+    my $vim = shift;
+    my $net_name = shift;
+
+    my $net_views = $vim->find_entity_views(view_type => 'Network', filter => { 'name' => $net_name });
+    my $net = shift @$net_views;
+    if( $net ){
+        my $ans = { key => $net->{'config'}->key,
+                    type => $net->{'mo_ref'}->type,
+                  };
+        $ans->{switch} = $net->{'config'}->distributedVirtualSwitch->value if $ans->{type} eq 'DistributedVirtualPortgroup';
+        debug_msg( var($net_name)." has a network key of ".var($ans->{key})." and is ".var($ans->{type})." type" );
+        return $ans;
+    }
 }
 
 
