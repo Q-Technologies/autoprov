@@ -1,0 +1,53 @@
+---
+vi_servers:
+  - match_net: '^My new'
+    server: 172.16.45.135
+    port: 443
+    api_loc: /sdk/vimService
+  - match_net: '^VM '
+    server:  172.16.45.135
+    port: 443
+    api_loc: /sdk/vimService
+clusters:
+  - LDC-CLUSTER01
+datastores:
+  blacklist: 'ISOs'
+guest_boot_timeout: 300
+guest_creds:
+  user: root
+  passwd: easypass
+vm_fields:
+  guest_name: 
+    required: 1
+    validate: '^l(g|r|s|e|q|h|x|p|j)(e|s|q|x)[a-z0-9]+$'
+  template: 
+    required: 1
+    validate: '^[a-z0-9]+$'
+    default: CentOS-7-Template
+  ip_address: 
+    required: 1
+    validate: ARRAY
+  memory: 
+    required: 1
+    validate: '^\d+$'
+    default: 2048
+  vcpus: 
+    required: 1
+    validate: '^\d+$'
+    default: 2
+  extra: 
+    required: 0
+    validate: '^\d+$'
+  folder: 
+    required: 1
+    validate: '^[[:print:]]+$'
+    default: Test Machines
+  puppet_facts: 
+    required: 1
+    validate: HASH
+    default: 
+      role: base
+  guest_id: 
+    required: 1
+    validate: '^[a-z0-9_]+(_64)?Guest$'
+    default: rhel7_64Guest
