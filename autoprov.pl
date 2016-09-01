@@ -559,11 +559,12 @@ sub get_network_info {
     my $net_views = $vim->find_entity_views(view_type => 'Network', filter => { 'name' => $net_name });
     my $net = shift @$net_views;
     if( $net ){
-        my $ans = { key => $net->{'config'}->key,
-                    type => $net->{'mo_ref'}->type,
-                  };
-        $ans->{switch} = $net->{'config'}->distributedVirtualSwitch->value if $ans->{type} eq 'DistributedVirtualPortgroup';
-        debug_msg( var($net_name)." has a network key of ".var($ans->{key})." and is ".var($ans->{type})." type" );
+        my $ans = { type => $net->{'mo_ref'}->type };
+        if( $ans->{type} eq 'DistributedVirtualPortgroup' ){
+            $ans->{key} = $net->{'config'}->key;
+            $ans->{switch} = $net->{'config'}->distributedVirtualSwitch->value;
+        }
+        debug_msg( var($net_name)." is a network of ".var($ans->{type})." type" );
         return $ans;
     }
 }
