@@ -239,15 +239,22 @@ sub connect_to_vi {
     if( ! $service_instance ){
 #=end IGNORE
 #=cut
-        say "Your session has timed out, you will need to log in again.  Enter your vCenter credentials here:";
-        #say "Enter your vCenter credentials here:";
-        print "User name: ";
-        chomp( my $username = <STDIN>);
-        print "Password: ";
-        ReadMode('noecho'); # don't echo
-        chomp( my $password = <STDIN>);
-        ReadMode(0);        # back to normal
-        print "\n";
+        my $username;
+        my $password;
+        if( $ENV{PROV_USER} and $ENV{PROV_PASS} ){
+            $username = $ENV{PROV_USER};
+            $password = $ENV{PROV_PASS};
+        } else {
+            say "Your session has timed out, you will need to log in again.  Enter your vCenter credentials here:";
+            #say "Enter your vCenter credentials here:";
+            print "User name: ";
+            chomp( $username = <STDIN>);
+            print "Password: ";
+            ReadMode('noecho'); # don't echo
+            chomp( $password = <STDIN>);
+            ReadMode(0);        # back to normal
+            print "\n";
+        }
         $vim->login(user_name => $username, password => $password);
         $vim->save_session(session_file => $session_file);
 #=begin IGNORE
@@ -667,7 +674,7 @@ sub get_esx_host_and_ds {
                                      total_gb => $ds->summary->capacity/1024/1024/1024, 
                                    } if $ds->summary->accessible == 1 and 
                                         $ds->summary->maintenanceMode eq "normal" and 
-                                        $ds->overallStatus->val eq "green" and
+                                        #$ds->overallStatus->val eq "green" and # This seems too restrictive
                                         $ds->name !~ qr/$ds_bl/;
     }
     #say Dump( $datastores );

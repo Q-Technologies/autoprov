@@ -29,8 +29,8 @@ Rather than listing all the Perl modules that need to be installed here, see the
 
 You can install the script anywhere, but at the moment the following paths are used to load 
 configuration data (this might be fixed in the future with a global config file):
-* /build/config/settings.yaml - the main settings - a lot of VMware environment information
-* /build/config/ip_lookup.yaml - a map to get a network name from an IP address
+* ```/build/config/settings.yaml``` - the main settings - a lot of VMware environment information
+* ```/build/config/ip_lookup.yaml``` - a map to get a network name from an IP address
 
 Update these files with your site data.  See the included samples to get you started.
 
@@ -99,7 +99,7 @@ Assuming a Red Hat like system:
 ```bash
 curl -k -s https://vcenter/certs/download -o /tmp/cert.zip
 unzip /tmp/cert.zip
-mv certs/2d5c82ee.0 certs/2d5c82ee.0.crt
+mv certs/2d5c82ee.0 certs/2d5c82ee.0.crt # your cert names may be different
 mv certs/2d5c82ee.r0 certs/2d5c82ee.r0.crt
 sudo cp certs/*crt /etc/pki/ca-trust/source/anchors/
 sudo update-ca-trust
